@@ -1,0 +1,230 @@
+// machin-fighter — game/fight_game.src
+// Watch two tinybrain self-play champions fight, or press H to take the left
+// fighter (←/→ move, Z punch, X kick, ↓ block, ↑ jump, C fireball). Both sides
+// load the same fighter.json. Build: ./build.sh   Run: ./fight-game
+// Self-captures fight_shot_*.png for verification.
+
+extern "raylib" {
+	header "raylib.h"
+	link "raylib" link "GL" link "m" link "pthread" link "dl" link "rt" link "X11"
+	cstruct Color { r u8 g u8 b u8 a u8 }
+	cstruct Vector2 { x f32 y f32 }
+	fn InitWindow(i32, i32, string)
+	fn SetTargetFPS(i32)
+	fn WindowShouldClose() bool
+	fn BeginDrawing()
+	fn EndDrawing()
+	fn ClearBackground(Color)
+	fn CloseWindow()
+	fn DrawRectangle(i32, i32, i32, i32, Color)
+	fn DrawCircle(i32, i32, f32, Color)
+	fn DrawLineEx(Vector2, Vector2, f32, Color)
+	fn DrawText(string, i32, i32, i32, Color)
+	fn IsKeyDown(i32) bool
+	fn IsKeyPressed(i32) bool
+	fn TakeScreenshot(string)
+}
+
+func SC() (v) { v = 9.0 }
+func GROUND() (v) { v = 430.0 }
+
+func vec(x, y) (o) { o = Vector2{x, y} }
+func lineb(x1, y1, x2, y2, th, c) {
+	DrawLineEx(vec(x1, y1), vec(x2, y2), th, c)
+}
+
+// draw one fighter posed by its state. faceR = facing +x.
+func draw_fighter(f, faceR, col, hurt) {
+	gx := f.x * SC()
+	lift := 0.0
+	if f.air > 0 {
+		ph := float(JUMP_FR() - f.air) / JUMP_FR()
+		lift = sin(ph * pi()) * 60.0
+	}
+	cy := GROUND() - lift
+	c := col
+	if f.stun > 0 {
+		c = hurt
+	}
+	dir := 1.0
+	if faceR == false {
+		dir = 0.0 - 1.0
+	}
+	shoulder := cy - 62.0
+	hip := cy - 34.0
+	// head + torso
+	lean := 0.0
+	if f.stun > 0 {
+		lean = 0.0 - dir * 7.0    // knocked back
+	}
+	DrawCircle(int(gx + lean), int(cy - 74.0), 9.0, c)
+	lineb(gx + lean, cy - 66.0, gx, hip, 6.0, c)
+	// back leg (planted)
+	lineb(gx, hip, gx - dir * 10.0, GROUND(), 5.0, c)
+	// front leg — kick extends it forward
+	if f.mv == 2 && mv_is_startup(f.mv, f.t) == 0 {
+		lineb(gx, hip, gx + dir * 34.0, hip + 6.0, 6.0, c)   // kick out
+	} else {
+		lineb(gx, hip, gx + dir * 8.0, GROUND(), 5.0, c)
+	}
+	// back arm
+	lineb(gx + lean, shoulder, gx - dir * 8.0, shoulder + 16.0, 4.0, c)
+	// front arm — punch extends, block guards
+	if f.mv == 1 && mv_is_startup(f.mv, f.t) == 0 {
+		lineb(gx + lean, shoulder, gx + dir * 30.0, shoulder, 5.0, c)   // punch out
+	} else {
+		if f.block == 1 {
+			lineb(gx + lean, shoulder, gx + dir * 12.0, shoulder + 4.0, 5.0, c)
+			lineb(gx + dir * 12.0, shoulder + 4.0, gx + dir * 12.0, hip, 5.0, c)  // guard
+		} else {
+			lineb(gx + lean, shoulder, gx + dir * 12.0, shoulder + 14.0, 4.0, c)
+		}
+	}
+}
+
+func hpbar(x, y, hp, col) {
+	w := 360
+	DrawRectangle(x, y, w, 22, Color{40, 44, 54, 255})
+	h := hp
+	if h < 0 {
+		h = 0
+	}
+	DrawRectangle(x, y, int(float(w) * float(h) / 100.0), 22, col)
+}
+
+func human_action() (act) {
+	act = 0
+	if IsKeyDown(90) {          // Z punch
+		act = 3
+	} else {
+		if IsKeyDown(88) {      // X kick
+			act = 4
+		} else {
+			if IsKeyDown(67) {  // C fireball
+				act = 6
+			} else {
+				if IsKeyDown(264) {     // down block
+					act = 5
+				} else {
+					if IsKeyDown(265) { // up jump
+						act = 7
+					} else {
+						if IsKeyDown(262) {     // right fwd
+							act = 1
+						} else {
+							if IsKeyDown(263) { // left back
+								act = 2
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func main() {
+	src := read_file("ml/models/fighter.json")
+	if len(src) == 0 {
+		println("no champion — run ml/fight_evolve.src first")
+		exit(1)
+	}
+	n := parse(src, Net{})
+	if n.tinybrain != 1 {
+		println("bad artifact")
+		exit(1)
+	}
+	// a former champion for the exhibition (different style -> a real fight, not
+	// a same-net stare-down); you play against the champion itself
+	rival := n
+	rsrc := read_file("ml/models/fighter_rival.json")
+	if len(rsrc) > 0 {
+		rival = parse(rsrc, Net{})
+	}
+	W := int(FIELD() * SC())
+	InitWindow(W, 520, "machin-fighter - two tinybrain self-play champions fight")
+	SetTargetFPS(60)
+	cyan := Color{90, 200, 235, 255}
+	orange := Color{240, 150, 70, 255}
+	hurt := Color{235, 90, 90, 255}
+	white := Color{235, 235, 235, 255}
+	green := Color{120, 220, 130, 255}
+	fbcol := Color{245, 230, 120, 255}
+
+	g := fight_new(7)
+	human := false
+	wins_l := 0
+	wins_r := 0
+	overT := 0
+	t := 0
+	for WindowShouldClose() == false {
+		if IsKeyPressed(72) {      // H toggles human
+			human = !human
+		}
+		if g.a.hp > 0 && g.b.hp > 0 {
+			actA := 0
+			if human {
+				actA = human_action()
+			} else {
+				actA = fight_net_action(n, g, 0)
+			}
+			rightNet := rival
+			if human {
+				rightNet = n
+			}
+			actB := fight_net_action(rightNet, g, 1)
+			g = fight_apply(g, 0, actA)
+			g = fight_apply(g, 1, actB)
+			g = fight_step(g)
+			overT = 0
+		} else {
+			overT = overT + 1
+			if overT == 1 {
+				if g.a.hp > g.b.hp {
+					wins_l = wins_l + 1
+				} else {
+					wins_r = wins_r + 1
+				}
+			}
+			if overT > 120 {
+				g = fight_new(7 + t)
+			}
+		}
+
+		BeginDrawing()
+		ClearBackground(Color{22, 26, 33, 255})
+		DrawRectangle(0, int(GROUND()) + 2, W, 90, Color{30, 34, 42, 255})
+		hpbar(24, 22, g.a.hp, cyan)
+		hpbar(W - 384, 22, g.b.hp, orange)
+		lbl := "P1"
+		if human {
+			lbl = "YOU"
+		}
+		DrawText(lbl + "  " + str(wins_l), 24, 48, 20, cyan)
+		DrawText(str(wins_r) + "  CPU", W - 90, 48, 20, orange)
+		if g.fbx > -900.0 {
+			DrawCircle(int(g.fbx * SC()), int(GROUND() - 40.0), 9.0, fbcol)
+		}
+		faceA := g.b.x > g.a.x
+		faceB := g.a.x > g.b.x
+		draw_fighter(g.a, faceA, cyan, hurt)
+		draw_fighter(g.b, faceB, orange, hurt)
+		DrawText("tinybrain self-play — press H to fight (←/→ move · Z punch · X kick · ↓ block · ↑ jump · C fireball)", 24, 490, 16, white)
+		if human == false {
+			DrawText("champion vs a former champion (self-play lineage)", W / 2 - 190, 470, 18, green)
+		}
+		if g.a.hp <= 0 || g.b.hp <= 0 {
+			wtext := "P1 WINS"
+			if g.b.hp > g.a.hp {
+				wtext = "P2 WINS"
+			}
+			DrawText(wtext, W / 2 - 70, 200, 44, white)
+		}
+		EndDrawing()
+		t = t + 1
+		if t == 220 || t == 380 || t == 560 {
+			TakeScreenshot("fight_shot_" + str(t) + ".png")
+		}
+	}
+	CloseWindow()
+}

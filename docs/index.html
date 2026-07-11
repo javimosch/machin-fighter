@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>machin-fighter — two tiny neural nets learned to fight by fighting each other</title>
+<style>
+  body { margin: 0; background: #12151b; color: #eaeaea; font: 15px/1.5 system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 22px 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  p { max-width: 760px; margin: 0; color: #b9bec7; text-align: center; }
+  a { color: #7dc4ff; }
+  canvas { max-width: 100%; height: auto; border-radius: 8px; background: #161a21; }
+  #status { color: #8b93a1; font-size: 13px; }
+  .facts { max-width: 760px; color: #8b93a1; font-size: 13px; text-align: center; }
+  button { padding: 6px 20px; border-radius: 6px; border: 1px solid #4a5568; background: #232a36;
+           color: #cbd5e0; cursor: pointer; font-size: 15px; }
+  button.on { background: #2b6c3f; color: #fff; }
+  kbd { background:#232a36; border:1px solid #3a465a; border-radius:4px; padding:1px 6px; font-size:12px; }
+</style>
+</head>
+<body>
+<h1>machin-fighter</h1>
+<p>Two <a href="https://github.com/javimosch/tinybrain">tinybrain</a> neural nets
+(<b>16&nbsp;→&nbsp;20&nbsp;→&nbsp;8</b>) that learned to fight by <b>fighting each other</b> — Hall-of-Fame
+self-play co-evolution, no dataset, no scripted teacher. A Street-Fighter footsies engine (walk, punch,
+kick, block, jump, fireball — real startup/active/recovery frames, <b>no physics</b>) runs entirely in
+WebAssembly; JS only draws. Watch the champion fight itself, or <b>take the left fighter</b>.</p>
+<div style="display:flex;gap:10px">
+  <button id="bwatch" class="on">watch a bout</button>
+  <button id="bplay">fight it</button>
+</div>
+<canvas id="cv" width="900" height="520"></canvas>
+<div id="status">loading…</div>
+<p class="facts"><kbd>←</kbd><kbd>→</kbd> move · <kbd>Z</kbd> punch · <kbd>X</kbd> kick · <kbd>↓</kbd> block ·
+<kbd>↑</kbd> jump · <kbd>C</kbd> fireball &nbsp;·&nbsp; trained in ~3&nbsp;min against a <b>league of past
+champions</b> + a scripted-bot anchor (the red-queen-cycle fix); the champion beats the scripted fighter
+decisively on unseen seeds. Drove <b>coevolve_run</b> into
+<a href="https://github.com/javimosch/tinybrain">tinybrain</a>, same as
+<a href="https://javimosch.github.io/machin-pong/">machin-pong</a>.
+<a href="https://github.com/javimosch/machin-fighter">Source &amp; training log</a>.</p>
+<script type="module">
+const status = (m) => document.getElementById('status').textContent = m;
+const cv = document.getElementById('cv'), cx = cv.getContext('2d');
+try {
+  const stub = new Proxy({}, { get: () => () => 0 });
+  const [wasmResp, art, rart] = await Promise.all([ fetch('fight.wasm'), (await fetch('fighter.json')).text(), (await fetch('fighter_rival.json')).text() ]);
+  const { instance } = await WebAssembly.instantiate(await wasmResp.arrayBuffer(),
+    { wasi_snapshot_preview1: stub, env: stub });
+  const ex = instance.exports; ex._initialize?.();
+  const load = (s, fn) => { const b = new TextEncoder().encode(s); const q = ex.buf(BigInt(b.length)); new Uint8Array(ex.memory.buffer).set(b, Number(q)); return fn(q); };
+  if (load(art, ex.boot) !== 1n) throw new Error('artifact rejected');
+  load(rart, ex.boot_rival);
+
+  const FW = ex.fw(), JF = Number(ex.jumpfr()), SC = cv.width / FW, GY = 430;
+  let human = false;
+  const bw = document.getElementById('bwatch'), bp = document.getElementById('bplay');
+  const setMode = h => { human = h; ex.set_human(BigInt(h?1:0)); bp.classList.toggle('on',h); bw.classList.toggle('on',!h); };
+  bw.onclick = () => setMode(false); bp.onclick = () => setMode(true);
+  const keys = {};
+  window.addEventListener('keydown', e => { keys[e.key] = true; if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault(); });
+  window.addEventListener('keyup', e => { keys[e.key] = false; });
+  function humanAct() {
+    if (keys['z']||keys['Z']) return 3; if (keys['x']||keys['X']) return 4;
+    if (keys['c']||keys['C']) return 6; if (keys['ArrowDown']) return 5;
+    if (keys['ArrowUp']) return 7; if (keys['ArrowRight']) return 1; if (keys['ArrowLeft']) return 2;
+    return 0;
+  }
+  function line(x1,y1,x2,y2,w,col){ cx.strokeStyle=col; cx.lineWidth=w; cx.lineCap='round'; cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke(); }
+  function fighter(x, hp, pose, air, faceR, col, hurt) {
+    const gx = x * SC;
+    let lift = 0; if (air > 0) lift = Math.sin((JF-air)/JF * Math.PI) * 60;
+    const cy = GY - lift, dir = faceR ? 1 : -1;
+    const c = pose === 5 ? hurt : col;
+    const sh = cy - 62, hip = cy - 34, lean = pose === 5 ? -dir*7 : 0;
+    cx.fillStyle = c; cx.beginPath(); cx.arc(gx+lean, cy-74, 9, 0, 7); cx.fill();
+    line(gx+lean, cy-66, gx, hip, 6, c);
+    line(gx, hip, gx-dir*10, GY, 5, c);                                    // back leg
+    if (pose === 2) line(gx, hip, gx+dir*34, hip+6, 6, c);                 // kick
+    else line(gx, hip, gx+dir*8, GY, 5, c);                               // front leg
+    line(gx+lean, sh, gx-dir*8, sh+16, 4, c);                             // back arm
+    if (pose === 1) line(gx+lean, sh, gx+dir*30, sh, 5, c);               // punch
+    else if (pose === 3) { line(gx+lean, sh, gx+dir*12, sh+4, 5, c); line(gx+dir*12, sh+4, gx+dir*12, hip, 5, c); } // guard
+    else line(gx+lean, sh, gx+dir*12, sh+14, 4, c);
+  }
+  function hpbar(x, y, hp, col) {
+    cx.fillStyle = '#282c36'; cx.fillRect(x, y, 360, 20);
+    cx.fillStyle = col; cx.fillRect(x, y, 360 * Math.max(0,hp)/100, 20);
+  }
+  const cyan='#5ac8eb', orange='#f0964a', hurt='#eb5a5a';
+  function draw() {
+    cx.fillStyle = '#161a21'; cx.fillRect(0,0,cv.width,cv.height);
+    cx.fillStyle = '#20242e'; cx.fillRect(0, GY+2, cv.width, 90);
+    const ax = ex.ax(), bx = ex.bx();
+    hpbar(24, 20, Number(ex.ahp()), cyan); hpbar(cv.width-384, 20, Number(ex.bhp()), orange);
+    cx.fillStyle = cyan; cx.font = 'bold 18px system-ui'; cx.fillText((human?'YOU ':'P1 ')+Number(ex.score_l()), 24, 60);
+    cx.fillStyle = orange; cx.fillText(Number(ex.score_r())+' CPU', cv.width-80, 60);
+    const fb = ex.fbx(); if (fb > -900) { cx.fillStyle = '#f5e678'; cx.beginPath(); cx.arc(fb*SC, GY-40, 9, 0, 7); cx.fill(); }
+    fighter(ax, Number(ex.ahp()), Number(ex.apose()), Number(ex.aair()), bx>ax, cyan, hurt);
+    fighter(bx, Number(ex.bhp()), Number(ex.bpose()), Number(ex.bair()), ax>bx, orange, hurt);
+    if (Number(ex.ahp()) <= 0 || Number(ex.bhp()) <= 0) {
+      cx.fillStyle = '#eaeaea'; cx.font = 'bold 40px system-ui';
+      cx.fillText(Number(ex.ahp())>Number(ex.bhp())?'P1 WINS':'P2 WINS', cv.width/2-90, 210);
+    }
+  }
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    acc = Math.min(acc + (now - last), 200); last = now;
+    if (human) ex.set_act(BigInt(humanAct()));
+    while (acc >= 1000/60) { ex.tick(); acc -= 1000/60; }
+    draw(); requestAnimationFrame(frame);
+  }
+  status('running — engine + inference in wasm, JS only draws');
+  requestAnimationFrame(frame);
+} catch (e) { status('failed: ' + e.message); console.error(e); }
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+// ml/fight_smoke.src — validate the fight engine before training: bot vs bot
+// (should be a real, damaging fight that resolves), and a random net vs the bot
+// (the net should get wrecked — the floor). If HP actually moves and matches end
+// by KO (not just timeout), the sim's combat works.
+func main() {
+	tb_seed(1)
+	rnet := net_new([]int{16, 20, 8}, []string{"tanh", "tanh"}, 1)
+	dummy := net_zeros([]int{16, 20, 8}, []string{"tanh", "tanh"})
+
+	println("=== bot vs bot (5 seeds) ===")
+	for _, sd := range []int{1, 2, 3, 4, 5} {
+		m := fight_match(dummy, 1, dummy, 1, sd, 2400)
+		println("{\"seed\":" + str(sd) + ",\"ha\":" + str(m.ha) + ",\"hb\":" + str(m.hb) + ",\"ticks\":" + str(m.ticks) + "}")
+	}
+	println("=== random net (left) vs bot (right), 5 seeds ===")
+	nWins := 0
+	for _, sd := range []int{1, 2, 3, 4, 5} {
+		m := fight_match(rnet, 0, dummy, 1, sd, 2400)
+		if m.ha > m.hb {
+			nWins = nWins + 1
+		}
+		println("{\"seed\":" + str(sd) + ",\"net_hp\":" + str(m.ha) + ",\"bot_hp\":" + str(m.hb) + ",\"ticks\":" + str(m.ticks) + "}")
+	}
+	println("random net won " + str(nWins) + "/5 (expected ~0)")
+}

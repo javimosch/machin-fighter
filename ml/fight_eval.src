@@ -1,0 +1,79 @@
+// machin-fighter — ml/fight_eval.src
+// Verify the champion (ml/models/fighter.json) on UNSEEN seeds: win rate + HP
+// margin vs the scripted bot and vs a random net, plus the Elo ladder (later
+// champion vs earlier — the evidence self-play, not just the anchor, drove it).
+
+func F_TOPO() (t) { t = []int{16, 20, 8} }
+func F_ACTS() (a) { a = []string{"tanh", "tanh"} }
+
+func fpoints(nA, nB, kindB, seed) (margin) {
+	m1 := fight_match(nA, 0, nB, kindB, seed, 1200)
+	m2 := fight_match(nB, kindB, nA, 0, seed + 9, 1200)
+	margin = float((m1.ha - m1.hb) + (m2.hb - m2.ha)) / 2.0
+}
+
+func eval_vs(gnet, onet, oKind, nSeeds, seed0) (wins, meanMargin) {
+	wins = 0
+	total := 0.0
+	s := 0
+	while s < nSeeds {
+		mar := fpoints(gnet, onet, oKind, seed0 + s * 811)
+		total = total + mar
+		if mar > 0.0 {
+			wins = wins + 1
+		}
+		s = s + 1
+	}
+	meanMargin = total / float(nSeeds)
+}
+
+func main() {
+	gnet := net_load("ml/models/fighter.json")
+	if gnet.tinybrain != 1 {
+		println("no champion — run ml/fight_evolve.src first")
+		return
+	}
+	dummy := net_zeros(F_TOPO(), F_ACTS())
+	println("=== champion eval (ml/models/fighter.json), 40 unseen seeds ===")
+	w, mm := eval_vs(gnet, dummy, 1, 40, 30000)
+	println("{\"vs\":\"aggressive_bot\",\"wins\":" + str(w) + "/40,\"mean_hp_margin\":" + tb_fmt(mm) + "}")
+	wt, mmt := eval_vs(gnet, dummy, 2, 40, 35000)
+	println("{\"vs\":\"turtle_bot\",\"wins\":" + str(wt) + "/40,\"mean_hp_margin\":" + tb_fmt(mmt) + "}")
+
+	tb_seed(999)
+	rnet := net_new(F_TOPO(), F_ACTS(), 999)
+	wr, mmr := eval_vs(gnet, rnet, 0, 40, 40000)
+	println("{\"vs\":\"random_net\",\"wins\":" + str(wr) + "/40,\"mean_hp_margin\":" + tb_fmt(mmr) + "}")
+
+	println("=== Elo ladder: later champion vs earlier (24 unseen seeds each) ===")
+	ladderOk := true
+	i := 1
+	while i < 4 {
+		later := net_load("ml/models/fighter_lad" + str(i) + ".json")
+		earlier := net_load("ml/models/fighter_lad" + str(i - 1) + ".json")
+		if later.tinybrain != 1 || earlier.tinybrain != 1 {
+			println("{\"ladder\":\"snapshots missing\"}")
+			break
+		}
+		lw, lmm := eval_vs(later, earlier, 0, 24, 50000 + i * 313)
+		beat := "yes"
+		if lw < 13 {
+			beat = "NO"
+			ladderOk = false
+		}
+		println("{\"lad" + str(i) + "_vs_lad" + str(i - 1) + "\":\"" + str(lw) + "/24\",\"margin\":" + tb_fmt(lmm) + ",\"later_better\":\"" + beat + "\"}")
+		i = i + 1
+	}
+
+	println("=== summary ===")
+	if w >= 30 && mm > 0.0 {
+		println("PASS: self-play champion beats the scripted fighting bot on unseen seeds")
+	} else {
+		println("WEAK: champion does not convincingly beat the bot")
+	}
+	if ladderOk {
+		println("PASS: Elo ladder monotone — self-play drove the skill")
+	} else {
+		println("NOTE: Elo ladder noisy (co-evolution)")
+	}
+}

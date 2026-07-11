@@ -1,0 +1,58 @@
+// machin-fighter — ml/fight_evolve.src
+// Self-play: two fighters learn to fight by fighting EACH OTHER, via tinybrain's
+// coevolve_run (the Hall-of-Fame loop the pong demo pulled into the framework).
+// The domain supplies two closures — matchfn (a net's HP margin vs an opponent
+// net, both sides) and anchorfn (its margin vs the scripted bot) — and the
+// framework runs population + league + best-absolute champion + Elo timeline.
+
+func F_TOPO() (t) { t = []int{16, 20, 8} }
+func F_ACTS() (a) { a = []string{"tanh", "tanh"} }
+func MAXT() (v) { v = 1200 }
+
+// nA's AGGRESSION-WEIGHTED score vs an opponent, both sides. Rewarding damage
+// DEALT (and only lightly penalizing damage taken) is the key to a lively game:
+// scoring pure HP-margin bred a "never commit, wait to punish" meta where two
+// champions just stare at each other. Here a passive policy deals ~0 = scores
+// ~0, so evolution pushes both fighters to actually attack — and the better
+// attacker still wins because whiffs get punished (damage taken costs too).
+func fight_points(nA, nB, kindB, seed) (margin) {
+	m1 := fight_match(nA, 0, nB, kindB, seed, MAXT())          // nA on left
+	m2 := fight_match(nB, kindB, nA, 0, seed + 9, MAXT())      // nA on right
+	s1 := float(100 - m1.hb) - 0.5 * float(100 - m1.ha)
+	s2 := float(100 - m2.ha) - 0.5 * float(100 - m2.hb)
+	margin = (s1 + s2) / 2.0
+}
+
+func save_snap(hof, idx, path) {
+	n := net_zeros(F_TOPO(), F_ACTS())
+	net_set_genome(n, hof[idx])
+	n.meta.trained_by = "coevolve-hof"
+	net_save(n, path)
+}
+
+func main() {
+	dummy := net_zeros(F_TOPO(), F_ACTS())
+	matchfn := func(a, b, s) {
+		return fight_points(a, b, 0, s)
+	}
+	anchorfn := func(net, s) {
+		return (fight_points(net, dummy, 1, s) + fight_points(net, dummy, 2, s + 3)) / 2.0
+	}
+	cfg := coevolve_cfg_default()
+	cfg.generations = 130
+	cfg.pop = 36
+	cfg.mut_sigma = 0.3
+	cfg.print_every = 8
+
+	champ, bestAnchor, hof := coevolve_run(F_TOPO(), F_ACTS(), matchfn, anchorfn, cfg)
+	net_save(champ, "ml/models/fighter.json")
+
+	n := len(hof)
+	if n >= 4 {
+		save_snap(hof, 0, "ml/models/fighter_lad0.json")
+		save_snap(hof, n / 3, "ml/models/fighter_lad1.json")
+		save_snap(hof, 2 * n / 3, "ml/models/fighter_lad2.json")
+		save_snap(hof, n - 1, "ml/models/fighter_lad3.json")
+	}
+	println("{\"done\":true,\"best_champ_vs_bot\":" + tb_fmt(bestAnchor) + ",\"hof\":" + str(n) + "}")
+}

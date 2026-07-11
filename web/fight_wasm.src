@@ -1,0 +1,102 @@
+// machin-fighter — web/fight_wasm.src
+// Browser build: the SAME fight engine + tinybrain inference in wasm; the canvas
+// host polls fighter state (position, pose, hp) and draws. Default is champion
+// vs champion; JS can flip the left fighter to human control (set_human/set_act).
+// Build: web/build_web.sh -> docs/
+
+var g_net = Net{}
+var g_rival = Net{}
+var g_g = Fight{}
+var g_sl = 0
+var g_sr = 0
+var g_human = 0
+var g_act = 0
+var g_over = 0
+var g_seed = 7
+var g_booted = 0
+
+export func buf(n) (p) { p = alloc(n + 1) }
+
+export func boot(p) (ok) {
+	src := ptr_str(p)
+	free(p)
+	g_net = parse(src, Net{})
+	ok = 0
+	if g_net.tinybrain != 1 {
+		return
+	}
+	g_rival = g_net
+	g_g = fight_new(g_seed)
+	g_sl = 0
+	g_sr = 0
+	g_over = 0
+	g_booted = 1
+	ok = 1
+}
+
+// load the former-champion rival (JS passes fighter_rival.json after boot)
+export func boot_rival(p) (ok) {
+	src := ptr_str(p)
+	free(p)
+	r := parse(src, Net{})
+	ok = 0
+	if r.tinybrain != 1 {
+		return
+	}
+	g_rival = r
+	ok = 1
+}
+
+export func set_human(h) { g_human = h }
+export func set_act(a) { g_act = a }
+
+export func tick() {
+	if g_booted == 0 {
+		return
+	}
+	if g_g.a.hp > 0 && g_g.b.hp > 0 {
+		actA := 0
+		if g_human == 1 {
+			actA = g_act
+		} else {
+			actA = fight_net_action(g_net, g_g, 0)
+		}
+		rightNet := g_rival
+		if g_human == 1 {
+			rightNet = g_net
+		}
+		actB := fight_net_action(rightNet, g_g, 1)
+		g_g = fight_apply(g_g, 0, actA)
+		g_g = fight_apply(g_g, 1, actB)
+		g_g = fight_step(g_g)
+		g_over = 0
+	} else {
+		g_over = g_over + 1
+		if g_over == 1 {
+			if g_g.a.hp > g_g.b.hp {
+				g_sl = g_sl + 1
+			} else {
+				g_sr = g_sr + 1
+			}
+		}
+		if g_over > 100 {
+			g_seed = g_seed + 1
+			g_g = fight_new(g_seed)
+		}
+	}
+}
+
+export func ax() (v) { v = g_g.a.x }
+export func bx() (v) { v = g_g.b.x }
+export func ahp() (v) { v = g_g.a.hp }
+export func bhp() (v) { v = g_g.b.hp }
+export func apose() (v) { v = fpose(g_g.a) }
+export func bpose() (v) { v = fpose(g_g.b) }
+export func aair() (v) { v = g_g.a.air }
+export func bair() (v) { v = g_g.b.air }
+export func fbx() (v) { v = g_g.fbx }
+export func score_l() (v) { v = g_sl }
+export func score_r() (v) { v = g_sr }
+export func over() (v) { v = g_over }
+export func fw() (v) { v = FIELD() }
+export func jumpfr() (v) { v = JUMP_FR() }
