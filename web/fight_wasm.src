@@ -94,7 +94,6 @@ export func apose() (v) { v = fpose(g_g.a) }
 export func bpose() (v) { v = fpose(g_g.b) }
 export func aair() (v) { v = g_g.a.air }
 export func bair() (v) { v = g_g.b.air }
-export func fbx() (v) { v = g_g.fbx }
 export func score_l() (v) { v = g_sl }
 export func score_r() (v) { v = g_sr }
 export func over() (v) { v = g_over }

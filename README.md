@@ -6,14 +6,15 @@ with [tinybrain](https://github.com/javimosch/tinybrain). No dataset, no scripte
 teacher: the agents *are* each other's sparring partner.
 
 A Street-Fighter-style **footsies engine with no physics** — a discrete frame-data
-state machine. Eight actions (walk fwd/back, punch, kick, block, jump, fireball),
-real **startup / active / recovery** windows, hitstun, blockstun, knockback,
-projectiles, and jump-dodges-fireball. A `[16 → 20 → 8]` tanh net (one small JSON
-artifact) reads 16 mirror-symmetric senses (spacing, both fighters' states, the
-fireball) and picks an action by argmax. The design is a **rock-paper-scissors of
-spacing**: kicks out-range punches but recover slow (whiff-punishable), fireballs
-zone but lose to jump-ins, and blocking mitigates ~70% but a **turtle still bleeds
-to chip** under pressure — so there's no degenerate dominant strategy.
+state machine. Seven actions (walk fwd/back, punch, kick, block, jump), real
+**startup / active / recovery** windows, hitstun, blockstun, knockback. A
+`[13 → 20 → 7]` tanh net (one small JSON artifact) reads 13 mirror-symmetric
+senses (spacing, both fighters' states) and picks an action by argmax. The design
+is a **rock-paper-scissors of spacing**: kicks out-range punches but recover slow
+(whiff-punishable), a **jump has evasion i-frames** (airborne dodges attacks) but
+you can't act until you land, and blocking mitigates but a **turtle still bleeds
+to chip** under pressure — so there's no degenerate dominant strategy. Animated:
+a walk cycle (striding legs + swinging arms) and a tucked jump.
 
 ## Self-play (tinybrain `coevolve_run`)
 
@@ -29,27 +30,28 @@ pulled into tinybrain — a second competitive consumer, only the game changed.
 
 Trained in ~3 min single-threaded, verified on **unseen match seeds**:
 
-- **Self-play drove real skill** — the Elo ladder is monotone: each champion
-  beats the one before (gen-100 champ beats gen-60 **24/24**, gen-130 beats
-  gen-100 **24/24**). The strongest **duelist** (by round-robin over the whole
-  Hall of Fame) beats the runner-up with a **KO, ~56–0**, and beats a pure
-  **turtle 30/30**. Fights are lively — spacing, whiff-punishes, fireball zoning,
-  jump-ins.
-- **An honest non-transitivity** (and the coolest finding): **no single champion
-  dominates every style** — the champion selected for beating the scripted
-  *bots* turned out to be the *worst* duelist, and the best duelist gets countered
-  by the hyper-aggressive rushdown bot (~12/30). That's rock-paper-scissors —
-  exactly the dynamic of a real fighting-game roster, emergent from self-play with
-  zero hand-design. The shipped `fighter.json` is the best **duelist**; the
-  exhibition pits it against a former champion (a different style → a real fight,
-  not a same-net stare-down).
+- The champion beats **both** scripted archetypes decisively — the aggressive
+  rushdown bot **30/30** and the defensive turtle **30/30** — and **KOs the
+  exhibition rival 8/8**. Fights are lively: approach, whiff-punish, block,
+  jump-evade, KO.
+- **Two honest lessons this build taught, both baked in:**
+  1. *Scoring HP-margin bred a passive meta* — two competent nets learned "never
+     commit, wait to punish" and just **stared at each other**. The fix: reward
+     damage **dealt** plus a **big bonus for an actual KO**, so decisiveness is
+     selected and real fights emerge.
+  2. *Co-evolution has no total order* — "best vs the bots" ≠ "best vs peers" (an
+     early champion was the strongest *duelist* yet lost 0/30 to the bots). So the
+     shipped champion is picked by **competence** (beating the bots), and the
+     exhibition pits it against a **former champion** whose different style yields
+     a real fight (a same-net-vs-itself match just stares). That non-transitivity —
+     a rock-paper-scissors roster from zero hand-design — is the fun part.
 
 ## Run it
 
 ```sh
 ./build.sh          # vendors raylib, builds the viewer
-./fight-game        # watch champion vs champion; press H to fight it
-                    #   ←/→ move · Z punch · X kick · ↓ block · ↑ jump · C fireball
+./fight-game        # watch champion vs a former champion; press H to fight it
+                    #   ←/→ move · Z punch · X kick · ↓ block · ↑ jump
 
 # retrain from scratch (writes ml/models/fighter.json + Elo snapshots):
 machin encode ml/vendor/tinybrain.src ml/vendor/evolve.src src/fight.src ml/fight_evolve.src | machin run /dev/stdin

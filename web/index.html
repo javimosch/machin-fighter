@@ -22,10 +22,10 @@
 <body>
 <h1>machin-fighter</h1>
 <p>Two <a href="https://github.com/javimosch/tinybrain">tinybrain</a> neural nets
-(<b>16&nbsp;→&nbsp;20&nbsp;→&nbsp;8</b>) that learned to fight by <b>fighting each other</b> — Hall-of-Fame
+(<b>13&nbsp;→&nbsp;20&nbsp;→&nbsp;7</b>) that learned to fight by <b>fighting each other</b> — Hall-of-Fame
 self-play co-evolution, no dataset, no scripted teacher. A Street-Fighter footsies engine (walk, punch,
-kick, block, jump, fireball — real startup/active/recovery frames, <b>no physics</b>) runs entirely in
-WebAssembly; JS only draws. Watch the champion fight itself, or <b>take the left fighter</b>.</p>
+kick, block, jump — real startup/active/recovery frames, <b>no physics</b>) runs entirely in
+WebAssembly; JS only draws. Watch the champion fight a former champion, or <b>take the left fighter</b>.</p>
 <div style="display:flex;gap:10px">
   <button id="bwatch" class="on">watch a bout</button>
   <button id="bplay">fight it</button>
@@ -33,7 +33,7 @@ WebAssembly; JS only draws. Watch the champion fight itself, or <b>take the left
 <canvas id="cv" width="900" height="520"></canvas>
 <div id="status">loading…</div>
 <p class="facts"><kbd>←</kbd><kbd>→</kbd> move · <kbd>Z</kbd> punch · <kbd>X</kbd> kick · <kbd>↓</kbd> block ·
-<kbd>↑</kbd> jump · <kbd>C</kbd> fireball &nbsp;·&nbsp; trained in ~3&nbsp;min against a <b>league of past
+<kbd>↑</kbd> jump &nbsp;·&nbsp; trained in ~3&nbsp;min against a <b>league of past
 champions</b> + a scripted-bot anchor (the red-queen-cycle fix); the champion beats the scripted fighter
 decisively on unseen seeds. Drove <b>coevolve_run</b> into
 <a href="https://github.com/javimosch/tinybrain">tinybrain</a>, same as
@@ -62,27 +62,39 @@ try {
   window.addEventListener('keyup', e => { keys[e.key] = false; });
   function humanAct() {
     if (keys['z']||keys['Z']) return 3; if (keys['x']||keys['X']) return 4;
-    if (keys['c']||keys['C']) return 6; if (keys['ArrowDown']) return 5;
-    if (keys['ArrowUp']) return 7; if (keys['ArrowRight']) return 1; if (keys['ArrowLeft']) return 2;
+    if (keys['ArrowDown']) return 5; if (keys['ArrowUp']) return 6;
+    if (keys['ArrowRight']) return 1; if (keys['ArrowLeft']) return 2;
     return 0;
   }
   function line(x1,y1,x2,y2,w,col){ cx.strokeStyle=col; cx.lineWidth=w; cx.lineCap='round'; cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke(); }
-  function fighter(x, hp, pose, air, faceR, col, hurt) {
-    const gx = x * SC;
-    let lift = 0; if (air > 0) lift = Math.sin((JF-air)/JF * Math.PI) * 60;
-    const cy = GY - lift, dir = faceR ? 1 : -1;
+  function fighter(x, pose, air, faceR, col, hurt, phase, moving) {
+    const gx = x * SC, dir = faceR ? 1 : -1;
+    let lift = 0; if (air > 0) lift = Math.sin((JF-air)/JF * Math.PI) * 62;
+    const bob = (moving && pose===0) ? Math.abs(Math.sin(phase))*3 : 0;
+    const cy = GY - lift - bob;
     const c = pose === 5 ? hurt : col;
     const sh = cy - 62, hip = cy - 34, lean = pose === 5 ? -dir*7 : 0;
     cx.fillStyle = c; cx.beginPath(); cx.arc(gx+lean, cy-74, 9, 0, 7); cx.fill();
     line(gx+lean, cy-66, gx, hip, 6, c);
-    line(gx, hip, gx-dir*10, GY, 5, c);                                    // back leg
-    if (pose === 2) line(gx, hip, gx+dir*34, hip+6, 6, c);                 // kick
-    else line(gx, hip, gx+dir*8, GY, 5, c);                               // front leg
-    line(gx+lean, sh, gx-dir*8, sh+16, 4, c);                             // back arm
+    // legs
+    if (air > 0) {                                                        // tucked jump
+      line(gx, hip, gx-dir*9, hip+13, 5, c); line(gx-dir*9, hip+13, gx-dir*2, hip+5, 5, c);
+      line(gx, hip, gx+dir*10, hip+12, 5, c); line(gx+dir*10, hip+12, gx+dir*16, hip+7, 5, c);
+    } else if (pose === 2) {                                              // kick
+      line(gx, hip, gx-dir*10, GY, 5, c); line(gx, hip, gx+dir*34, hip+6, 6, c);
+    } else if (moving) {                                                  // walk stride
+      const sw = Math.sin(phase)*12;
+      line(gx, hip, gx+dir*sw, GY, 5, c); line(gx, hip, gx-dir*sw, GY, 5, c);
+    } else {                                                              // idle stance
+      line(gx, hip, gx-dir*8, GY, 5, c); line(gx, hip, gx+dir*6, GY, 5, c);
+    }
+    // arms
     if (pose === 1) line(gx+lean, sh, gx+dir*30, sh, 5, c);               // punch
     else if (pose === 3) { line(gx+lean, sh, gx+dir*12, sh+4, 5, c); line(gx+dir*12, sh+4, gx+dir*12, hip, 5, c); } // guard
-    else line(gx+lean, sh, gx+dir*12, sh+14, 4, c);
+    else { const aw = (moving && air===0) ? Math.sin(phase)*9 : 0;        // swing
+      line(gx+lean, sh, gx-dir*aw+dir*6, sh+15, 4, c); line(gx+lean, sh, gx+dir*aw-dir*6, sh+15, 4, c); }
   }
+  let pax = 0, pbx = 0, fr = 0;
   function hpbar(x, y, hp, col) {
     cx.fillStyle = '#282c36'; cx.fillRect(x, y, 360, 20);
     cx.fillStyle = col; cx.fillRect(x, y, 360 * Math.max(0,hp)/100, 20);
@@ -92,12 +104,14 @@ try {
     cx.fillStyle = '#161a21'; cx.fillRect(0,0,cv.width,cv.height);
     cx.fillStyle = '#20242e'; cx.fillRect(0, GY+2, cv.width, 90);
     const ax = ex.ax(), bx = ex.bx();
+    const movA = Math.abs(ax-pax) > 0.05, movB = Math.abs(bx-pbx) > 0.05;
+    pax = ax; pbx = bx; fr++;
+    const phA = fr*0.4, phB = fr*0.4 + 1.6;
     hpbar(24, 20, Number(ex.ahp()), cyan); hpbar(cv.width-384, 20, Number(ex.bhp()), orange);
     cx.fillStyle = cyan; cx.font = 'bold 18px system-ui'; cx.fillText((human?'YOU ':'P1 ')+Number(ex.score_l()), 24, 60);
     cx.fillStyle = orange; cx.fillText(Number(ex.score_r())+' CPU', cv.width-80, 60);
-    const fb = ex.fbx(); if (fb > -900) { cx.fillStyle = '#f5e678'; cx.beginPath(); cx.arc(fb*SC, GY-40, 9, 0, 7); cx.fill(); }
-    fighter(ax, Number(ex.ahp()), Number(ex.apose()), Number(ex.aair()), bx>ax, cyan, hurt);
-    fighter(bx, Number(ex.bhp()), Number(ex.bpose()), Number(ex.bair()), ax>bx, orange, hurt);
+    fighter(ax, Number(ex.apose()), Number(ex.aair()), bx>ax, cyan, hurt, phA, movA);
+    fighter(bx, Number(ex.bpose()), Number(ex.bair()), ax>bx, orange, hurt, phB, movB);
     if (Number(ex.ahp()) <= 0 || Number(ex.bhp()) <= 0) {
       cx.fillStyle = '#eaeaea'; cx.font = 'bold 40px system-ui';
       cx.fillText(Number(ex.ahp())>Number(ex.bhp())?'P1 WINS':'P2 WINS', cv.width/2-90, 210);

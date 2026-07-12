@@ -1,54 +1,45 @@
 // machin-fighter — src/fight.src
 // A Street-Fighter-style footsies engine with NO physics: a discrete frame-data
-// state machine on a 1D stage. Two fighters, eight actions (neutral, walk
-// fwd/back, punch, kick, block, fireball, jump), real startup/active/recovery
-// windows, hitstun/blockstun, knockback, projectiles, jump-dodges-fireball. One
-// mirror-symmetric tinybrain policy plays either side. Built to be LEARNABLE by
-// self-play: kicks out-range punches but whiff/recover slow (punishable),
-// fireballs zone but lose to jump-ins — a rock-paper-scissors of spacing.
+// state machine on a 1D stage. Two fighters, SEVEN actions (neutral, walk
+// fwd/back, punch, kick, block, jump), real startup/active/recovery windows,
+// hitstun/blockstun, knockback. One mirror-symmetric tinybrain policy plays
+// either side. Rock-paper-scissors of spacing: kicks out-range punches but
+// recover slow (whiff-punishable), blocking mitigates but a turtle still bleeds
+// to chip, and a JUMP has evasion i-frames (airborne dodges attacks) but you
+// can't act until you land — so jumping is a read, not a panic button.
 
 func FIELD() (v) { v = 100.0 }
-func BODY() (v) { v = 3.5 }       // half-width; fighters can't overlap or cross
+func BODY() (v) { v = 3.5 }
 func WALK() (v) { v = 0.9 }
 func PUNCH_R() (v) { v = 9.0 }
 func KICK_R() (v) { v = 15.0 }
 func PUNCH_D() (v) { v = 6 }
 func KICK_D() (v) { v = 12 }
-func FB_D() (v) { v = 8 }
-// chip damage taken while blocking — proportional so a pure TURTLE still bleeds
-// under sustained pressure (blocking is ~70% mitigation, not immunity)
 func chip_of(mv) (v) {
 	v = 2
 	if mv == 2 {
-		v = 3     // kick
+		v = 3
 	}
 }
-func FB_CHIP() (v) { v = 2 }
 func HITSTUN() (v) { v = 12 }
 func BLOCKSTUN() (v) { v = 6 }
-func KB() (v) { v = 3.5 }          // knockback on hit
+func KB() (v) { v = 3.5 }
 func JUMP_FR() (v) { v = 34 }
-func FB_SPEED() (v) { v = 1.7 }
-func FB_CD() (v) { v = 48 }
 
 type Fighter struct {
 	x float
 	hp int
-	mv int     // committed move: 0 none, 1 punch, 2 kick, 3 fireball
+	mv int     // committed move: 0 none, 1 punch, 2 kick
 	t int      // ticks into mv
-	hit int    // 1 = current mv already connected (one hit per move)
-	stun int   // hit/block-stun frames remaining (not actionable)
-	air int    // airborne frames remaining (dodges fireballs)
+	hit int    // 1 = current mv already connected
+	stun int   // hit/block-stun frames remaining
+	air int    // airborne frames remaining (evasion i-frames)
 	block int  // 1 = blocking this tick
-	fbcd int   // fireball cooldown
 }
 
 type Fight struct {
 	a Fighter
 	b Fighter
-	fbx float   // fireball x; < -900 = none
-	fbdir int
-	fbown int   // 0 = a's, 1 = b's
 	rng int
 }
 
@@ -59,7 +50,6 @@ func fabsf(v) (o) {
 	}
 }
 
-// move frame tables (t = ticks into the move)
 func mv_total(mv) (v) {
 	v = 0
 	if mv == 1 {
@@ -67,9 +57,6 @@ func mv_total(mv) (v) {
 	}
 	if mv == 2 {
 		v = 25
-	}
-	if mv == 3 {
-		v = 14
 	}
 }
 func mv_is_active(mv, t) (v) {
@@ -87,9 +74,6 @@ func mv_is_startup(mv, t) (v) {
 		v = 1
 	}
 	if mv == 2 && t < 8 {
-		v = 1
-	}
-	if mv == 3 && t < 6 {
 		v = 1
 	}
 }
@@ -128,13 +112,11 @@ func fight_new(seed) (g) {
 	if r == 0 {
 		r = 1
 	}
-	// seeded starting positions so every match is a genuinely different game
-	// (the engine is otherwise deterministic) — the analog of pong's served ball
 	r, va := fr_next(r)
 	r, vb := fr_next(r)
 	ax := 26.0 + va * 16.0
 	bx := 58.0 + vb * 16.0
-	g = Fight{a: Fighter{x: ax, hp: 100, mv: 0, t: 0, hit: 0, stun: 0, air: 0, block: 0, fbcd: 0}, b: Fighter{x: bx, hp: 100, mv: 0, t: 0, hit: 0, stun: 0, air: 0, block: 0, fbcd: 0}, fbx: -1000.0, fbdir: 0, fbown: 0, rng: r}
+	g = Fight{a: Fighter{x: ax, hp: 100, mv: 0, t: 0, hit: 0, stun: 0, air: 0, block: 0}, b: Fighter{x: bx, hp: 100, mv: 0, t: 0, hit: 0, stun: 0, air: 0, block: 0}, rng: r}
 }
 
 func f_actionable(f) (v) {
@@ -144,8 +126,7 @@ func f_actionable(f) (v) {
 	}
 }
 
-// apply one side's chosen action (0 idle,1 fwd,2 back,3 punch,4 kick,5 block,
-// 6 fireball,7 jump). Movement/attacks only start if the fighter is actionable.
+// apply one side's action (0 idle,1 fwd,2 back,3 punch,4 kick,5 block,6 jump)
 func fight_apply(g, side, act) (g2) {
 	g2 = g
 	me := g2.a
@@ -180,13 +161,6 @@ func fight_apply(g, side, act) (g2) {
 			me.block = 1
 		}
 		if act == 6 {
-			if me.fbcd == 0 && g2.fbx < -900.0 {
-				me.mv = 3
-				me.t = 0
-				me.hit = 0
-			}
-		}
-		if act == 7 {
 			me.air = JUMP_FR()
 		}
 	}
@@ -197,8 +171,6 @@ func fight_apply(g, side, act) (g2) {
 	}
 }
 
-// resolve attacker A's active hit onto defender D; returns updated D + attacker
-// (attacker only to set A.hit). face = attacker's facing (for knockback dir).
 func resolve_hit(at, df, face) (at2, df2) {
 	at2 = at
 	df2 = df
@@ -219,15 +191,15 @@ func fight_step(g) (g2) {
 	a := g2.a
 	b := g2.b
 
-	// hit detection — computed from the SAME pre-tick snapshot so same-frame
-	// hits are a mutual TRADE (no left-side priority): decide both, then apply
+	// hit detection from the same pre-tick snapshot (same-frame = a trade). An
+	// AIRBORNE defender is dodging — attacks whiff through them.
 	dist := fabsf(a.x - b.x)
 	aHits := false
-	if mv_is_active(a.mv, a.t) == 1 && a.hit == 0 && dist <= mv_range(a.mv) + BODY() {
+	if mv_is_active(a.mv, a.t) == 1 && a.hit == 0 && b.air == 0 && dist <= mv_range(a.mv) + BODY() {
 		aHits = true
 	}
 	bHits := false
-	if mv_is_active(b.mv, b.t) == 1 && b.hit == 0 && dist <= mv_range(b.mv) + BODY() {
+	if mv_is_active(b.mv, b.t) == 1 && b.hit == 0 && a.air == 0 && dist <= mv_range(b.mv) + BODY() {
 		bHits = true
 	}
 	if aHits {
@@ -245,75 +217,9 @@ func fight_step(g) (g2) {
 		b, a = resolve_hit(b, a, fb)
 	}
 
-	// fireball spawn on active frame of a fireball move
-	if a.mv == 3 && a.t == 6 && g2.fbx < -900.0 {
-		fa := 1.0
-		if b.x < a.x {
-			fa = 0.0 - 1.0
-		}
-		g2.fbx = a.x + fa * BODY()
-		g2.fbdir = int(fa)
-		g2.fbown = 0
-		a.fbcd = FB_CD()
-	}
-	if b.mv == 3 && b.t == 6 && g2.fbx < -900.0 {
-		fb := 1.0
-		if a.x < b.x {
-			fb = 0.0 - 1.0
-		}
-		g2.fbx = b.x + fb * BODY()
-		g2.fbdir = int(fb)
-		g2.fbown = 1
-		b.fbcd = FB_CD()
-	}
-
-	// fireball travel + collision with the non-owner
-	if g2.fbx > -900.0 {
-		g2.fbx = g2.fbx + float(g2.fbdir) * FB_SPEED()
-		tgtIsA := g2.fbown == 1
-		tx := b.x
-		if tgtIsA {
-			tx = a.x
-		}
-		if fabsf(g2.fbx - tx) <= BODY() {
-			if tgtIsA {
-				if a.air > 0 {
-					// jump dodges
-				} else {
-					if a.block == 1 {
-						a.hp = a.hp - FB_CHIP()
-						a.stun = BLOCKSTUN()
-					} else {
-						a.hp = a.hp - FB_D()
-						a.stun = HITSTUN()
-						a.mv = 0
-					}
-				}
-			} else {
-				if b.air > 0 {
-				} else {
-					if b.block == 1 {
-						b.hp = b.hp - FB_CHIP()
-						b.stun = BLOCKSTUN()
-					} else {
-						b.hp = b.hp - FB_D()
-						b.stun = HITSTUN()
-						b.mv = 0
-					}
-				}
-			}
-			g2.fbx = -1000.0
-		}
-		if g2.fbx < 0.0 || g2.fbx > FIELD() {
-			g2.fbx = -1000.0
-		}
-	}
-
-	// advance timers
 	a = tick_fighter(a)
 	b = tick_fighter(b)
 
-	// clamp to stage + keep a left of b with a minimum gap (no crossing/overlap)
 	if a.x < BODY() {
 		a.x = BODY()
 	}
@@ -351,13 +257,10 @@ func tick_fighter(f) (f2) {
 	if f2.air > 0 {
 		f2.air = f2.air - 1
 	}
-	if f2.fbcd > 0 {
-		f2.fbcd = f2.fbcd - 1
-	}
 }
 
-// mirror-symmetric sensors (16) for `side`. The policy always "sees" itself on
-// the left facing right. All in ~[-1,1] / {0,1}.
+// mirror-symmetric sensors (13) for `side`; policy always "sees" itself on the
+// left facing right. All in ~[-1,1] / {0,1}.
 func fight_sensors(g, side) (x) {
 	me := g.a
 	you := g.b
@@ -370,18 +273,6 @@ func fight_sensors(g, side) (x) {
 		yx = FIELD() - g.a.x
 	}
 	dist := fabsf(g.a.x - g.b.x)
-	fbIn := 0.0
-	fbClose := 0.0
-	if g.fbx > -900.0 {
-		if g.fbown != side {
-			fbIn = 1.0
-			myWorld := g.a.x
-			if side == 1 {
-				myWorld = g.b.x
-			}
-			fbClose = 1.0 - fabsf(g.fbx - myWorld) / FIELD()
-		}
-	}
 	x = []float{}
 	x = append(x, mx / FIELD() * 2.0 - 1.0)
 	x = append(x, yx / FIELD() * 2.0 - 1.0)
@@ -391,14 +282,11 @@ func fight_sensors(g, side) (x) {
 	x = append(x, b2f(f_actionable(me)))
 	x = append(x, i2f(me.stun))
 	x = append(x, i2f(me.air))
-	x = append(x, i2f(me.fbcd))
 	x = append(x, float(mv_is_active(you.mv, you.t)))
 	x = append(x, float(mv_is_startup(you.mv, you.t)))
 	x = append(x, i2f(you.block))
 	x = append(x, i2f(you.air))
 	x = append(x, i2f(you.stun))
-	x = append(x, fbIn)
-	x = append(x, fbClose)
 }
 
 func b2f(v) (o) {
@@ -414,7 +302,6 @@ func i2f(v) (o) {
 	}
 }
 
-// argmax of the net's 8 outputs -> chosen action
 func fight_net_action(n, g, side) (act) {
 	out := net_forward(n, fight_sensors(g, side))
 	act = 0
@@ -441,39 +328,7 @@ func fight_policy(n, kind, g, side) (act) {
 	act = fight_net_action(n, g, side)
 }
 
-// a defensive TURTLE: walks in to avoid being zoned, then mostly blocks and
-// counter-pokes. The anti-strategy the champion must learn to open up (chip it
-// down / bait the poke) — training against it kills the "loses to a blocker" hole.
-func fight_turtle(g, side) (act) {
-	me := g.a
-	you := g.b
-	if side == 1 {
-		me = g.b
-		you = g.a
-	}
-	act = 0
-	if f_actionable(me) == false {
-		return
-	}
-	dist := fabsf(g.a.x - g.b.x)
-	if g.fbx > -900.0 && g.fbown != side {
-		act = 7      // jump the fireball
-		return
-	}
-	if dist > KICK_R() + 2.0 {
-		act = 1      // close distance
-		return
-	}
-	// occasional counter-poke when point-blank and opponent is recovering
-	if dist <= PUNCH_R() + BODY() && f_actionable(you) == false && you.stun == 0 {
-		act = 3
-		return
-	}
-	act = 5          // block
-}
-
-// scripted anchor: a competent-but-beatable rushdown/zoner. Approach, poke in
-// range, block a telegraphed attack, jump an incoming fireball, zone from afar.
+// aggressive rushdown anchor: approach and poke, block a telegraphed kick
 func fight_bot(g, side) (act) {
 	me := g.a
 	you := g.b
@@ -486,12 +341,6 @@ func fight_bot(g, side) (act) {
 		return
 	}
 	dist := fabsf(g.a.x - g.b.x)
-	// jump an incoming fireball
-	if g.fbx > -900.0 && g.fbown != side {
-		act = 7
-		return
-	}
-	// block a telegraphed attack that's in range
 	if mv_is_active(you.mv, you.t) == 1 && dist <= KICK_R() + BODY() {
 		act = 5
 		return
@@ -500,17 +349,10 @@ func fight_bot(g, side) (act) {
 		act = 5
 		return
 	}
-	// zone from far with fireballs
-	if dist > KICK_R() + 8.0 && me.fbcd == 0 {
-		act = 6
-		return
-	}
-	// approach if out of range
 	if dist > KICK_R() {
 		act = 1
 		return
 	}
-	// in range: jab up close, kick at mid
 	if dist <= PUNCH_R() + BODY() {
 		act = 3
 		return
@@ -518,8 +360,32 @@ func fight_bot(g, side) (act) {
 	act = 4
 }
 
-// a compact visual pose id for renderers: 0 idle, 1 punch, 2 kick, 3 block,
-// 4 jump, 5 hurt (hitstun). Shared by the native viewer and the wasm host.
+// defensive turtle anchor: close distance then mostly block + counter-poke — the
+// anti-strategy the champion must learn to open up (chip it down / bait the poke)
+func fight_turtle(g, side) (act) {
+	me := g.a
+	you := g.b
+	if side == 1 {
+		me = g.b
+		you = g.a
+	}
+	act = 0
+	if f_actionable(me) == false {
+		return
+	}
+	dist := fabsf(g.a.x - g.b.x)
+	if dist > KICK_R() + 2.0 {
+		act = 1
+		return
+	}
+	if dist <= PUNCH_R() + BODY() && f_actionable(you) == false && you.stun == 0 {
+		act = 3
+		return
+	}
+	act = 5
+}
+
+// visual pose id: 0 idle, 1 punch, 2 kick, 3 block, 4 jump, 5 hurt
 func fpose(f) (p) {
 	p = 0
 	if f.stun > 0 {
@@ -549,7 +415,6 @@ type FMatch struct {
 	ticks int
 }
 
-// play a full match; returns final HP + ticks. First to 0 HP (or timeout) loses.
 func fight_match(nA, kindA, nB, kindB, seed, maxTicks) (m) {
 	g := fight_new(seed)
 	t := 0

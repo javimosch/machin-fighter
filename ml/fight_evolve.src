@@ -5,7 +5,7 @@
 // net, both sides) and anchorfn (its margin vs the scripted bot) — and the
 // framework runs population + league + best-absolute champion + Elo timeline.
 
-func F_TOPO() (t) { t = []int{16, 20, 8} }
+func F_TOPO() (t) { t = []int{13, 20, 7} }
 func F_ACTS() (a) { a = []string{"tanh", "tanh"} }
 func MAXT() (v) { v = 1200 }
 
@@ -15,11 +15,25 @@ func MAXT() (v) { v = 1200 }
 // champions just stare at each other. Here a passive policy deals ~0 = scores
 // ~0, so evolution pushes both fighters to actually attack — and the better
 // attacker still wins because whiffs get punished (damage taken costs too).
+func ko_score(dealt, took, oppKO, meKO) (s) {
+	// reward damage dealt, lightly penalize damage taken, and BIG bonus for an
+	// actual KO (and penalty for being KO'd). Rewarding the KO — not just HP —
+	// is what forces decisiveness: two nets that stalemate 100-100 both score ~0,
+	// so evolution favours a fighter that actually closes and finishes.
+	s = float(dealt) - 0.3 * float(took)
+	if oppKO {
+		s = s + 45.0
+	}
+	if meKO {
+		s = s - 45.0
+	}
+}
+
 func fight_points(nA, nB, kindB, seed) (margin) {
 	m1 := fight_match(nA, 0, nB, kindB, seed, MAXT())          // nA on left
 	m2 := fight_match(nB, kindB, nA, 0, seed + 9, MAXT())      // nA on right
-	s1 := float(100 - m1.hb) - 0.5 * float(100 - m1.ha)
-	s2 := float(100 - m2.ha) - 0.5 * float(100 - m2.hb)
+	s1 := ko_score(100 - m1.hb, 100 - m1.ha, m1.hb <= 0, m1.ha <= 0)
+	s2 := ko_score(100 - m2.ha, 100 - m2.hb, m2.ha <= 0, m2.hb <= 0)
 	margin = (s1 + s2) / 2.0
 }
 

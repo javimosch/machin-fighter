@@ -1,8 +1,8 @@
 // machin-fighter — game/fight_game.src
 // Watch two tinybrain self-play champions fight, or press H to take the left
-// fighter (←/→ move, Z punch, X kick, ↓ block, ↑ jump, C fireball). Both sides
-// load the same fighter.json. Build: ./build.sh   Run: ./fight-game
-// Self-captures fight_shot_*.png for verification.
+// fighter (←/→ move, Z punch, X kick, ↓ block, ↑ jump). Animated: a walk cycle
+// (striding legs + swinging arms) and a tucked jump. Build: ./build.sh
+// Run: ./fight-game   Self-captures fight_shot_*.png for verification.
 
 extern "raylib" {
 	header "raylib.h"
@@ -33,51 +33,77 @@ func lineb(x1, y1, x2, y2, th, c) {
 	DrawLineEx(vec(x1, y1), vec(x2, y2), th, c)
 }
 
-// draw one fighter posed by its state. faceR = facing +x.
-func draw_fighter(f, faceR, col, hurt) {
+// draw one fighter, posed and animated. faceR = facing +x; phase = walk-cycle
+// clock; moving = took a step this frame.
+func draw_fighter(f, faceR, col, hurt, phase, moving) {
 	gx := f.x * SC()
+	pose := fpose(f)
 	lift := 0.0
 	if f.air > 0 {
-		ph := float(JUMP_FR() - f.air) / JUMP_FR()
-		lift = sin(ph * pi()) * 60.0
+		pj := float(JUMP_FR() - f.air) / float(JUMP_FR())
+		lift = sin(pj * pi()) * 62.0
 	}
-	cy := GROUND() - lift
+	bob := 0.0
+	if moving && pose == 0 {
+		bob = fabsf(sin(phase)) * 3.0
+	}
+	cy := GROUND() - lift - bob
 	c := col
-	if f.stun > 0 {
+	if pose == 5 {
 		c = hurt
 	}
 	dir := 1.0
 	if faceR == false {
 		dir = 0.0 - 1.0
 	}
-	shoulder := cy - 62.0
+	sh := cy - 62.0
 	hip := cy - 34.0
-	// head + torso
 	lean := 0.0
-	if f.stun > 0 {
-		lean = 0.0 - dir * 7.0    // knocked back
+	if pose == 5 {
+		lean = 0.0 - dir * 7.0
 	}
+	// head + torso
 	DrawCircle(int(gx + lean), int(cy - 74.0), 9.0, c)
 	lineb(gx + lean, cy - 66.0, gx, hip, 6.0, c)
-	// back leg (planted)
-	lineb(gx, hip, gx - dir * 10.0, GROUND(), 5.0, c)
-	// front leg — kick extends it forward
-	if f.mv == 2 && mv_is_startup(f.mv, f.t) == 0 {
-		lineb(gx, hip, gx + dir * 34.0, hip + 6.0, 6.0, c)   // kick out
+
+	// legs
+	if f.air > 0 {
+		// tucked jump — knees up, feet rise with the body (no ground stretch)
+		lineb(gx, hip, gx - dir * 9.0, hip + 13.0, 5.0, c)
+		lineb(gx - dir * 9.0, hip + 13.0, gx - dir * 2.0, hip + 5.0, 5.0, c)
+		lineb(gx, hip, gx + dir * 10.0, hip + 12.0, 5.0, c)
+		lineb(gx + dir * 10.0, hip + 12.0, gx + dir * 16.0, hip + 7.0, 5.0, c)
 	} else {
-		lineb(gx, hip, gx + dir * 8.0, GROUND(), 5.0, c)
-	}
-	// back arm
-	lineb(gx + lean, shoulder, gx - dir * 8.0, shoulder + 16.0, 4.0, c)
-	// front arm — punch extends, block guards
-	if f.mv == 1 && mv_is_startup(f.mv, f.t) == 0 {
-		lineb(gx + lean, shoulder, gx + dir * 30.0, shoulder, 5.0, c)   // punch out
-	} else {
-		if f.block == 1 {
-			lineb(gx + lean, shoulder, gx + dir * 12.0, shoulder + 4.0, 5.0, c)
-			lineb(gx + dir * 12.0, shoulder + 4.0, gx + dir * 12.0, hip, 5.0, c)  // guard
+		if pose == 2 {
+			// kick: front leg extended forward, back leg planted
+			lineb(gx, hip, gx - dir * 10.0, GROUND(), 5.0, c)
+			lineb(gx, hip, gx + dir * 34.0, hip + 6.0, 6.0, c)
 		} else {
-			lineb(gx + lean, shoulder, gx + dir * 12.0, shoulder + 14.0, 4.0, c)
+			if moving {
+				sw := sin(phase) * 12.0
+				lineb(gx, hip, gx + dir * sw, GROUND(), 5.0, c)
+				lineb(gx, hip, gx - dir * sw, GROUND(), 5.0, c)
+			} else {
+				lineb(gx, hip, gx - dir * 8.0, GROUND(), 5.0, c)
+				lineb(gx, hip, gx + dir * 6.0, GROUND(), 5.0, c)
+			}
+		}
+	}
+
+	// arms
+	if pose == 1 {
+		lineb(gx + lean, sh, gx + dir * 30.0, sh, 5.0, c)              // punch
+	} else {
+		if pose == 3 {
+			lineb(gx + lean, sh, gx + dir * 12.0, sh + 4.0, 5.0, c)   // guard
+			lineb(gx + dir * 12.0, sh + 4.0, gx + dir * 12.0, hip, 5.0, c)
+		} else {
+			aw := 0.0
+			if moving && f.air == 0 {
+				aw = sin(phase) * 9.0
+			}
+			lineb(gx + lean, sh, gx - dir * aw + dir * 6.0, sh + 15.0, 4.0, c)  // arms swing
+			lineb(gx + lean, sh, gx + dir * aw - dir * 6.0, sh + 15.0, 4.0, c)
 		}
 	}
 }
@@ -100,21 +126,17 @@ func human_action() (act) {
 		if IsKeyDown(88) {      // X kick
 			act = 4
 		} else {
-			if IsKeyDown(67) {  // C fireball
-				act = 6
+			if IsKeyDown(264) {         // down block
+				act = 5
 			} else {
-				if IsKeyDown(264) {     // down block
-					act = 5
+				if IsKeyDown(265) {     // up jump
+					act = 6
 				} else {
-					if IsKeyDown(265) { // up jump
-						act = 7
+					if IsKeyDown(262) {         // right fwd
+						act = 1
 					} else {
-						if IsKeyDown(262) {     // right fwd
-							act = 1
-						} else {
-							if IsKeyDown(263) { // left back
-								act = 2
-							}
+						if IsKeyDown(263) { // left back
+							act = 2
 						}
 					}
 				}
@@ -134,8 +156,6 @@ func main() {
 		println("bad artifact")
 		exit(1)
 	}
-	// a former champion for the exhibition (different style -> a real fight, not
-	// a same-net stare-down); you play against the champion itself
 	rival := n
 	rsrc := read_file("ml/models/fighter_rival.json")
 	if len(rsrc) > 0 {
@@ -149,7 +169,6 @@ func main() {
 	hurt := Color{235, 90, 90, 255}
 	white := Color{235, 235, 235, 255}
 	green := Color{120, 220, 130, 255}
-	fbcol := Color{245, 230, 120, 255}
 
 	g := fight_new(7)
 	human := false
@@ -157,10 +176,14 @@ func main() {
 	wins_r := 0
 	overT := 0
 	t := 0
+	prevAx := g.a.x
+	prevBx := g.b.x
 	for WindowShouldClose() == false {
 		if IsKeyPressed(72) {      // H toggles human
 			human = !human
 		}
+		prevAx = g.a.x
+		prevBx = g.b.x
 		if g.a.hp > 0 && g.b.hp > 0 {
 			actA := 0
 			if human {
@@ -190,6 +213,10 @@ func main() {
 				g = fight_new(7 + t)
 			}
 		}
+		movA := fabsf(g.a.x - prevAx) > 0.05
+		movB := fabsf(g.b.x - prevBx) > 0.05
+		phA := float(t) * 0.4
+		phB := float(t) * 0.4 + 1.6
 
 		BeginDrawing()
 		ClearBackground(Color{22, 26, 33, 255})
@@ -202,14 +229,11 @@ func main() {
 		}
 		DrawText(lbl + "  " + str(wins_l), 24, 48, 20, cyan)
 		DrawText(str(wins_r) + "  CPU", W - 90, 48, 20, orange)
-		if g.fbx > -900.0 {
-			DrawCircle(int(g.fbx * SC()), int(GROUND() - 40.0), 9.0, fbcol)
-		}
 		faceA := g.b.x > g.a.x
 		faceB := g.a.x > g.b.x
-		draw_fighter(g.a, faceA, cyan, hurt)
-		draw_fighter(g.b, faceB, orange, hurt)
-		DrawText("tinybrain self-play — press H to fight (←/→ move · Z punch · X kick · ↓ block · ↑ jump · C fireball)", 24, 490, 16, white)
+		draw_fighter(g.a, faceA, cyan, hurt, phA, movA)
+		draw_fighter(g.b, faceB, orange, hurt, phB, movB)
+		DrawText("tinybrain self-play — press H to fight (←/→ move · Z punch · X kick · ↓ block · ↑ jump)", 24, 490, 16, white)
 		if human == false {
 			DrawText("champion vs a former champion (self-play lineage)", W / 2 - 190, 470, 18, green)
 		}

@@ -3,7 +3,7 @@
 // margin vs the scripted bot and vs a random net, plus the Elo ladder (later
 // champion vs earlier — the evidence self-play, not just the anchor, drove it).
 
-func F_TOPO() (t) { t = []int{16, 20, 8} }
+func F_TOPO() (t) { t = []int{13, 20, 7} }
 func F_ACTS() (a) { a = []string{"tanh", "tanh"} }
 
 func fpoints(nA, nB, kindB, seed) (margin) {
